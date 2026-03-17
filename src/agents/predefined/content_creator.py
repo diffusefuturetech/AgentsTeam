@@ -39,5 +39,6 @@ def get_role_data() -> dict:
         ),
         "provider_name": "openai",
         "model_name": "gpt-5.4",
+        "available_tools": ["web_search", "web_fetch", "create_artifact"],
         "is_predefined": True,
     }

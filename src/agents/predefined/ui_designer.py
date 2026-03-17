@@ -34,6 +34,7 @@ def get_role_data() -> dict:
             "Be precise, systematic, and accessibility-conscious. Think in design tokens and reusable patterns."
         ),
         "provider_name": "openai",
-        "model_name": "gpt-5.4",
+        "model_name": "gemini-3.1-flash-image-preview",
+        "available_tools": ["web_search", "web_fetch", "create_artifact"],
         "is_predefined": True,
     }

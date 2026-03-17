@@ -68,4 +68,10 @@ if os.path.exists(frontend_dir):
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("src.main:app", host=settings.host, port=settings.port, reload=True)
+    uvicorn.run(
+        "src.main:app",
+        host=settings.host,
+        port=settings.port,
+        reload=True,
+        reload_excludes=["*.db", "*.db-journal"],
+    )

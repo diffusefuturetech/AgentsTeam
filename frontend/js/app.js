@@ -152,7 +152,7 @@ async function loadTeamAgents() {
     }
 }
 
-// Poll for goal progress
+// Poll for goal progress (called on-demand when WS messages arrive, not on a timer)
 async function pollGoalProgress() {
     if (!currentGoalId) return;
     try {
@@ -182,5 +182,4 @@ async function pollGoalProgress() {
 document.addEventListener('DOMContentLoaded', () => {
     loadGoals();
     loadTeamAgents();
-    setInterval(pollGoalProgress, 5000);
 });

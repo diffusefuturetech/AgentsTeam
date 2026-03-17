@@ -33,6 +33,20 @@ class MessageBus:
         if q in self._subscribers:
             self._subscribers.remove(q)
 
+    def set_role_names(self, role_names: dict[UUID, str]):
+        """Set role ID to name mapping for readable logs."""
+        self._role_names = role_names
+
+    def resolve_name(self, role_id: UUID | None) -> str:
+        """Resolve a role ID to a human-readable agent name."""
+        if role_id is None:
+            return "system"
+        names = getattr(self, "_role_names", {})
+        return names.get(role_id, str(role_id)[:8])
+
+    def _resolve_name(self, role_id: UUID | None) -> str:
+        return self.resolve_name(role_id)
+
     async def publish(
         self,
         session: AsyncSession,
@@ -72,9 +86,9 @@ class MessageBus:
         # Queue for orchestrator processing
         await self._queue.put(message)
 
-        logger.info(
-            f"Message published: {message_type.value} from {sender_role_id} to {receiver_role_id}"
-        )
+        sender = self._resolve_name(sender_role_id)
+        receiver = self._resolve_name(receiver_role_id)
+        logger.info(f"[{message_type.value}] {sender} → {receiver}")
         return message
 
     async def get_next_message(self) -> Message:

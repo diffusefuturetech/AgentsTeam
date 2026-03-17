@@ -1,15 +1,19 @@
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+from src.tools.base import ToolCall, ToolDefinition
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class LLMMessage:
-    role: str  # "system", "user", "assistant"
+    role: str  # "system", "user", "assistant", "tool"
     content: str
+    tool_call_id: str | None = None  # For tool result messages
+    tool_calls: list[ToolCall] | None = None  # For assistant messages with tool calls
 
 
 @dataclass
@@ -17,6 +21,8 @@ class LLMResponse:
     content: str
     model: str
     usage: dict | None = None
+    tool_calls: list[ToolCall] | None = None
+    stop_reason: str | None = None
 
 
 class BaseLLMProvider(ABC):
@@ -29,6 +35,7 @@ class BaseLLMProvider(ABC):
         messages: list[LLMMessage],
         temperature: float = 0.7,
         max_tokens: int = 4096,
+        tools: list[ToolDefinition] | None = None,
     ) -> LLMResponse:
         """Send messages to LLM and get response."""
         ...
@@ -39,11 +46,12 @@ class BaseLLMProvider(ABC):
         temperature: float = 0.7,
         max_tokens: int = 4096,
         max_retries: int = 3,
+        tools: list[ToolDefinition] | None = None,
     ) -> LLMResponse:
         """Chat with exponential backoff retry logic."""
         for attempt in range(max_retries):
             try:
-                return await self.chat(messages, temperature, max_tokens)
+                return await self.chat(messages, temperature, max_tokens, tools=tools)
             except Exception as e:
                 wait = 2 ** attempt
                 logger.warning(

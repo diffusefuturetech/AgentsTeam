@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 9000
     log_level: str = "info"
+    max_tool_iterations: int = 10
+    max_dependency_result_length: int = 4000
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

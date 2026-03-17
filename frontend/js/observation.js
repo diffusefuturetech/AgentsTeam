@@ -24,6 +24,11 @@ function connectWebSocket() {
         const msg = JSON.parse(event.data);
         if (msg.type === 'ping') return;
         addMessageToFeed(msg);
+        // Refresh progress on task state changes (driven by WS, not polling)
+        const progressTypes = ['task_response', 'task_delegation', 'status_update', 'system_event'];
+        if (progressTypes.includes(msg.type) && typeof pollGoalProgress === 'function') {
+            pollGoalProgress();
+        }
     };
 
     ws.onclose = () => {

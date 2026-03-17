@@ -25,6 +25,8 @@ logger = logging.getLogger(__name__)
 class Orchestrator:
     """Main orchestration loop that drives agent collaboration."""
 
+    MAX_NESTED_AGENT_CALLS = 3
+
     def __init__(self):
         self.message_bus = MessageBus()
         self.scheduler = TaskScheduler()
@@ -34,6 +36,12 @@ class Orchestrator:
         self._current_session_id: UUID | None = None
         self._current_goal_id: UUID | None = None
         self._task: asyncio.Task | None = None
+        self._agent_call_depth: int = 0
+
+    def _sync_role_names(self):
+        """Push agent role_id->name mapping to MessageBus for readable logs."""
+        names = {a.role.id: a.role.name for a in self.registry.get_all_agents().values()}
+        self.message_bus.set_role_names(names)
 
     async def start(self):
         """Start the orchestrator background loop."""
@@ -50,12 +58,17 @@ class Orchestrator:
                     self._current_session_id = recoverable.id
                     self._current_goal_id = goal.id
                     await self.registry.load_team(session, recoverable.team_id)
+                    self._sync_role_names()
                     logger.info(f"Recovered session for goal: {goal.description[:80]}")
 
         # Check API keys
         available_providers = await self.state_manager.validate_api_keys()
         if not available_providers:
             logger.warning("No LLM providers configured! Set API keys in .env")
+
+        # Wire up ask_agent tool with orchestrator reference
+        from src.tools.ask_agent import set_orchestrator
+        set_orchestrator(self)
 
         self._task = asyncio.create_task(self._main_loop())
         logger.info("Orchestrator started")
@@ -114,6 +127,7 @@ class Orchestrator:
 
         # Load agents for this team
         await self.registry.load_team(session, team.id)
+        self._sync_role_names()
 
         # Create session
         sess = Session(
@@ -209,20 +223,48 @@ class Orchestrator:
             await self._activate_goal(session, goal)
             return
 
+        # Always sync from goal to ensure session_id is available after reload
+        session_id = goal.session_id
         if not self._current_session_id:
-            self._current_session_id = goal.session_id
+            self._current_session_id = session_id
             self._current_goal_id = goal.id
             # Reload team
             await self.registry.load_team(session, goal.team_id)
+            self._sync_role_names()
 
         # Get ready tasks
         ready_tasks = await self.scheduler.get_ready_tasks(session, goal.id)
 
+        if not ready_tasks:
+            # Check if all tasks are done (no ready tasks could mean all finished)
+            if await self.scheduler.all_tasks_done(session, goal.id):
+                await self._evaluate_goal_completion(session, goal)
+            return
+
+        # Mark all ready tasks as in_progress
         for task in ready_tasks:
-            # Mark in progress
             task.status = TaskStatus.in_progress
             session.add(task)
-            await session.commit()
+        await session.commit()
+
+        # Execute all ready tasks in parallel (each with its own DB session)
+        await asyncio.gather(
+            *(self._execute_task(task.id, goal.id, goal.description, session_id) for task in ready_tasks)
+        )
+
+        # Check if all tasks are done
+        async with async_session() as check_session:
+            if await self.scheduler.all_tasks_done(check_session, goal.id):
+                await self._evaluate_goal_completion(check_session, goal)
+
+    async def _execute_task(
+        self, task_id: UUID, goal_id: UUID, goal_description: str, session_id: UUID
+    ):
+        """Execute a single task with its own DB session (safe for parallel use)."""
+        async with async_session() as session:
+            task = await session.get(Task, task_id)
+            if not task:
+                return
 
             # Find assigned agent
             role = await session.get(AgentRole, task.assigned_to)
@@ -231,7 +273,7 @@ class Orchestrator:
                 task.result = "Agent role not found"
                 session.add(task)
                 await session.commit()
-                continue
+                return
 
             agent = self.registry.get_agent(role.role_key)
             if not agent:
@@ -239,23 +281,31 @@ class Orchestrator:
                 task.result = "Agent not loaded"
                 session.add(task)
                 await session.commit()
-                continue
+                return
 
-            # Get context (recent messages for this session)
-            history = await self.message_bus.get_history(session, self._current_session_id, limit=20)
+            # Get context (recent messages for this session) — T005: use agent names
+            history = await self.message_bus.get_history(session, session_id, limit=20)
             context = [
                 {
-                    "sender": str(m.sender_role_id) if m.sender_role_id else "system",
+                    "sender": self.message_bus.resolve_name(m.sender_role_id),
                     "content": m.content,
                 }
                 for m in history
             ]
 
-            # Execute task
+            # T007: Inject dependency results into task description
+            task_desc = f"{task.title}\n\n{task.description}"
+            dep_results = await self.scheduler.get_dependency_results(
+                session, goal_id, task,
+                role_name_resolver=self.message_bus.resolve_name,
+            )
+            if dep_results:
+                task_desc += "\n" + dep_results
+
             try:
                 await self.message_bus.publish(
                     session=session,
-                    session_id=self._current_session_id,
+                    session_id=session_id,
                     sender_role_id=role.id,
                     receiver_role_id=None,
                     message_type=MessageType.status_update,
@@ -263,48 +313,88 @@ class Orchestrator:
                     task_id=task.id,
                 )
 
+                # T024: Callback to publish tool call events to observation feed
+                async def _on_tool_call(tc, tr):
+                    args_preview = json.dumps(tc.arguments, ensure_ascii=False)[:200]
+                    status = "✓" if not tr.is_error else "✗"
+                    await self.message_bus.publish(
+                        session=session,
+                        session_id=session_id,
+                        sender_role_id=role.id,
+                        receiver_role_id=None,
+                        message_type=MessageType.status_update,
+                        content=f"🔧 Tool: {tc.name}({args_preview}) → {status}",
+                        task_id=task.id,
+                        metadata={"tool_call": True, "tool_name": tc.name},
+                    )
+
+                # T029: Callback to publish self-review events
+                async def _on_self_review(draft, final):
+                    await self.message_bus.publish(
+                        session=session,
+                        session_id=session_id,
+                        sender_role_id=role.id,
+                        receiver_role_id=None,
+                        message_type=MessageType.status_update,
+                        content=f"📝 Self-review: draft ({len(draft)} chars) → final ({len(final)} chars)",
+                        task_id=task.id,
+                        metadata={"self_review": True},
+                    )
+
                 result = await agent.process_message(
-                    goal=goal.description,
-                    task_description=f"{task.title}\n\n{task.description}",
+                    goal=goal_description,
+                    task_description=task_desc,
                     context=context,
+                    on_tool_call=_on_tool_call,
+                    on_self_review=_on_self_review,
                 )
 
                 task.status = TaskStatus.completed
                 task.result = result
                 task.completed_at = datetime.utcnow()
+
+                # T035: Attempt to parse structured output
+                try:
+                    parsed = json.loads(result)
+                    if isinstance(parsed, dict):
+                        task.result_structured = parsed
+                except (json.JSONDecodeError, ValueError):
+                    pass
+
                 session.add(task)
 
+                # T010: Raise truncation limit from 2000 to 8000
                 await self.message_bus.publish(
                     session=session,
-                    session_id=self._current_session_id,
+                    session_id=session_id,
                     sender_role_id=role.id,
                     receiver_role_id=None,
                     message_type=MessageType.task_response,
-                    content=result[:2000],  # Truncate for message
+                    content=result[:8000],
                     task_id=task.id,
                 )
 
             except Exception as e:
                 logger.exception(f"Task execution failed: {task.title}")
+                await session.rollback()
                 task.status = TaskStatus.failed
                 task.result = str(e)
                 session.add(task)
 
-                await self.message_bus.publish(
-                    session=session,
-                    session_id=self._current_session_id,
-                    sender_role_id=None,
-                    receiver_role_id=None,
-                    message_type=MessageType.system_event,
-                    content=f"Task failed: {task.title} - {str(e)[:200]}",
-                    task_id=task.id,
-                )
+                try:
+                    await self.message_bus.publish(
+                        session=session,
+                        session_id=session_id,
+                        sender_role_id=None,
+                        receiver_role_id=None,
+                        message_type=MessageType.system_event,
+                        content=f"Task failed: {task.title} - {str(e)[:200]}",
+                        task_id=task.id,
+                    )
+                except Exception:
+                    logger.exception("Failed to publish task failure message")
 
             await session.commit()
-
-        # Check if all tasks are done
-        if await self.scheduler.all_tasks_done(session, goal.id):
-            await self._evaluate_goal_completion(session, goal)
 
     async def _evaluate_goal_completion(self, session: AsyncSession, goal: Goal):
         """Have CEO evaluate if the goal is complete."""
@@ -312,7 +402,9 @@ class Orchestrator:
         if not ceo:
             return
 
-        task_results = await self.scheduler.get_task_results(session, goal.id)
+        task_results = await self.scheduler.get_task_results(
+            session, goal.id, role_name_resolver=self.message_bus.resolve_name
+        )
         evaluation = await ceo.evaluate_completion(goal.description, task_results)
 
         if evaluation.get("complete", False):
@@ -466,6 +558,50 @@ class Orchestrator:
                     content=response,
                     metadata={"in_reply_to": str(message_id)},
                 )
+
+
+    async def handle_agent_to_agent_request(
+        self, target_role_key: str, request: str
+    ) -> str:
+        """Handle an agent-to-agent request via the ask_agent tool."""
+        if self._agent_call_depth >= self.MAX_NESTED_AGENT_CALLS:
+            return f"Error: Maximum nested agent call depth ({self.MAX_NESTED_AGENT_CALLS}) reached. Cannot dispatch further requests."
+
+        agent = self.registry.get_agent(target_role_key)
+        if not agent:
+            available = list(self.registry.get_all_agents().keys())
+            return f"Error: Agent '{target_role_key}' not found. Available agents: {available}"
+
+        # Publish observation event
+        if self._current_session_id:
+            async with async_session() as session:
+                await self.message_bus.publish(
+                    session=session,
+                    session_id=self._current_session_id,
+                    sender_role_id=None,
+                    receiver_role_id=agent.role.id,
+                    message_type=MessageType.status_update,
+                    content=f"🤝 Agent-to-agent: requesting help from {agent.role.name}",
+                    metadata={"agent_to_agent": True, "target": target_role_key},
+                )
+
+        self._agent_call_depth += 1
+        try:
+            goal_desc = ""
+            if self._current_goal_id:
+                async with async_session() as session:
+                    goal = await session.get(Goal, self._current_goal_id)
+                    if goal:
+                        goal_desc = goal.description
+
+            result = await agent.process_message(
+                goal=goal_desc,
+                task_description=request,
+                context=[],
+            )
+            return result
+        finally:
+            self._agent_call_depth -= 1
 
 
 # Global orchestrator instance

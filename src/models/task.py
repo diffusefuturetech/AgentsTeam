@@ -26,5 +26,6 @@ class Task(SQLModel, table=True):
     depends_on: Optional[List[str]] = Field(default=None, sa_column=Column(JSON, nullable=True))
     delegation_count: int = Field(default=0)
     result: Optional[str] = Field(default=None)
+    result_structured: Optional[dict] = Field(default=None, sa_column=Column(JSON, nullable=True))
     created_at: datetime = Field(default_factory=datetime.utcnow)
     completed_at: Optional[datetime] = Field(default=None)

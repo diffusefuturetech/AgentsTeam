@@ -1,7 +1,9 @@
 import logging
+from typing import Callable
 from uuid import UUID
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select
+from src.config import settings
 from src.models.task import Task, TaskStatus
 
 logger = logging.getLogger(__name__)
@@ -41,14 +43,57 @@ class TaskScheduler:
         )
         return list(result.all())
 
-    async def get_task_results(self, session: AsyncSession, goal_id: UUID) -> list[dict]:
+    async def get_dependency_results(
+        self,
+        session: AsyncSession,
+        goal_id: UUID,
+        task: Task,
+        role_name_resolver: Callable[[UUID | None], str] | None = None,
+    ) -> str:
+        """Fetch results from dependency tasks and format them for injection into task description."""
+        if not task.depends_on:
+            return ""
+
+        all_tasks = await self.get_all_tasks(session, goal_id)
+        max_len = settings.max_dependency_result_length
+        parts = []
+
+        for dep_idx in task.depends_on:
+            if not isinstance(dep_idx, int) or dep_idx >= len(all_tasks):
+                continue
+            dep_task = all_tasks[dep_idx]
+            if dep_task.status != TaskStatus.completed or not dep_task.result:
+                continue
+
+            agent_name = (
+                role_name_resolver(dep_task.assigned_to)
+                if role_name_resolver
+                else str(dep_task.assigned_to)
+            )
+            result_text = dep_task.result[:max_len]
+            if len(dep_task.result) > max_len:
+                result_text += "\n... (truncated)"
+
+            parts.append(f"### {dep_task.title} (by {agent_name})\n{result_text}")
+
+        if not parts:
+            return ""
+
+        return "\n\n--- 前置任务结果 ---\n" + "\n\n".join(parts) + "\n--- 结束 ---"
+
+    async def get_task_results(
+        self,
+        session: AsyncSession,
+        goal_id: UUID,
+        role_name_resolver: Callable[[UUID | None], str] | None = None,
+    ) -> list[dict]:
         """Get completed task results for evaluation."""
         tasks = await self.get_all_tasks(session, goal_id)
         return [
             {
                 "title": t.title,
                 "description": t.description,
-                "assigned_to": str(t.assigned_to),
+                "assigned_to": role_name_resolver(t.assigned_to) if role_name_resolver else str(t.assigned_to),
                 "status": t.status.value,
                 "result": t.result,
             }
