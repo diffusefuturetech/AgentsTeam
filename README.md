@@ -4,7 +4,7 @@ A local multi-agent team system that orchestrates AI agents with customizable pr
 
 ## Features
 
-- **Multi-Agent Collaboration** - CEO agent decomposes goals into tasks, delegates to specialized agents (Engineer, Designer, PM, QA, Operations), and evaluates completion
+- **Multi-Agent Collaboration** - CEO agent decomposes goals into tasks, delegates to specialized agents (Douyin Strategist, Xiaohongshu Specialist, Growth Hacker, AI Citation Strategist, UI Designer, Content Creator), and evaluates completion
 - **Dependency-Aware Scheduling** - Tasks express dependencies; the scheduler ensures correct execution order
 - **Real-Time Observation** - WebSocket-powered live message feed shows agent activity as it happens
 - **Multiple LLM Providers** - Supports Anthropic Claude, OpenAI, and local models (Ollama)
@@ -38,11 +38,12 @@ A local multi-agent team system that orchestrates AI agents with customizable pr
 | Role | Key | Responsibility |
 |------|-----|----------------|
 | CEO | `ceo` | Goal decomposition, task delegation, completion evaluation |
-| Product Manager | `product_manager` | Requirements analysis, specifications |
-| Full-Stack Engineer | `engineer` | Technical design and implementation |
-| UI/UX Designer | `designer` | Interface and experience design |
-| QA Engineer | `qa_engineer` | Testing and quality assurance |
-| Operations | `operations` | Marketing, growth, and operations |
+| Douyin Strategist | `douyin_strategist` | Short-video marketing, algorithm optimization, livestream commerce |
+| Xiaohongshu Specialist | `xiaohongshu_specialist` | Lifestyle content, aesthetic storytelling, community engagement |
+| Growth Hacker | `growth_hacker` | User acquisition, viral loops, funnel optimization, A/B testing |
+| AI Citation Strategist | `ai_citation_strategist` | AI recommendation optimization (AEO/GEO), citation auditing |
+| UI Designer | `ui_designer` | Design systems, component libraries, accessible interfaces |
+| Content Creator | `content_creator` | Multi-platform content strategy, brand storytelling, SEO content |
 
 ## Quick Start
 
