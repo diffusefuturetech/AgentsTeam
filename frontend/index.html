@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AgentsTeam - 多智能体协作平台</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <header>
+        <h1>🤖 AgentsTeam</h1>
+        <div id="connection-status" class="status-disconnected">未连接</div>
+    </header>
+
+    <nav>
+        <button class="tab active" data-tab="observation">实时观察</button>
+        <button class="tab" data-tab="goals">目标管理</button>
+        <button class="tab" data-tab="agents">Agent管理</button>
+        <button class="tab" data-tab="history">历史记录</button>
+    </nav>
+
+    <!-- Observation Tab -->
+    <div id="observation" class="tab-content active">
+        <div class="observation-layout">
+            <div class="message-feed">
+                <div id="messages" class="messages-container">
+                    <div class="empty-state">等待Agent开始工作...</div>
+                </div>
+            </div>
+            <div class="sidebar">
+                <div class="current-goal-panel">
+                    <h3>当前目标</h3>
+                    <div id="current-goal">无活跃目标</div>
+                    <div id="goal-controls" class="hidden">
+                        <button onclick="pauseGoal()" class="btn btn-warning">暂停</button>
+                        <button onclick="stopGoal()" class="btn btn-danger">停止</button>
+                        <button onclick="confirmGoal()" class="btn btn-success hidden" id="confirm-btn">确认完成</button>
+                    </div>
+                </div>
+                <div class="agents-panel">
+                    <h3>团队成员</h3>
+                    <div id="team-agents">加载中...</div>
+                </div>
+                <div class="progress-panel">
+                    <h3>任务进度</h3>
+                    <div id="task-progress">无任务</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Goals Tab -->
+    <div id="goals" class="tab-content">
+        <div class="panel">
+            <h2>创建新目标</h2>
+            <form id="goal-form" onsubmit="createGoal(event)">
+                <textarea id="goal-input" placeholder="输入目标，例如：为一个待办事项应用撰写产品需求文档" rows="3"></textarea>
+                <button type="submit" class="btn btn-primary">启动团队</button>
+            </form>
+        </div>
+        <div class="panel">
+            <h2>历史目标</h2>
+            <div id="goals-list">加载中...</div>
+        </div>
+    </div>
+
+    <!-- Agents Tab -->
+    <div id="agents" class="tab-content">
+        <div class="panel">
+            <h2>创建自定义Agent</h2>
+            <form id="agent-form" onsubmit="createAgent(event)">
+                <input type="text" id="agent-name" placeholder="Agent名称" required>
+                <input type="text" id="agent-role-key" placeholder="角色标识 (如 data_analyst)" required>
+                <input type="text" id="agent-expertise" placeholder="专长领域 (逗号分隔)">
+                <textarea id="agent-responsibilities" placeholder="职责描述" rows="2"></textarea>
+                <textarea id="agent-prompt" placeholder="系统提示词 (必须包含 {goal})" rows="3"></textarea>
+                <div class="form-row">
+                    <select id="agent-provider">
+                        <option value="anthropic">Anthropic Claude</option>
+                        <option value="openai">OpenAI</option>
+                        <option value="local">本地模型</option>
+                    </select>
+                    <input type="text" id="agent-model" placeholder="模型名称" value="claude-sonnet-4-6">
+                </div>
+                <button type="submit" class="btn btn-primary">创建Agent</button>
+            </form>
+        </div>
+        <div class="panel">
+            <h2>Agent列表</h2>
+            <div id="agents-list">加载中...</div>
+        </div>
+    </div>
+
+    <!-- History Tab -->
+    <div id="history" class="tab-content">
+        <div class="panel">
+            <h2>目标历史记录</h2>
+            <div class="history-selector">
+                <label for="history-goal-select">选择已完成的目标：</label>
+                <select id="history-goal-select">
+                    <option value="">-- 请选择目标 --</option>
+                </select>
+            </div>
+        </div>
+        <div id="history-detail" class="hidden">
+            <div class="panel">
+                <h2>会话消息</h2>
+                <div id="history-messages" class="history-messages-container">
+                    <div class="empty-state">选择一个目标以查看消息记录</div>
+                </div>
+            </div>
+            <div class="panel">
+                <h2>产出物</h2>
+                <div id="history-artifacts" class="history-artifacts-grid">
+                    <div class="empty-state">暂无产出物</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="toast-container"></div>
+
+    <script src="/js/app.js"></script>
+    <script src="/js/observation.js"></script>
+    <script src="/js/agents.js"></script>
+    <script src="/js/history.js"></script>
+</body>
+</html>
